@@ -100,24 +100,16 @@ class LangChainVNPT(BaseChatModel):
                   messages: List[BaseMessage],
                   stop: Optional[List[str]] = None,
                   **kwargs: Any) -> ChatResult:
-        payload_msgs = self._prepare_messages(messages)
-
-        json_data: Dict[str, Any] = {
-            "model": self._body_model,
-            "messages": payload_msgs,
-            "temperature": kwargs.get("temperature", self._temperature),
-            "top_p": kwargs.get("top_p", self._top_p),
-            "top_k": kwargs.get("top_k", self._top_k),
-            "n": kwargs.get("n", self._n),
-            "max_completion_tokens": kwargs.get("max_completion_tokens", self._max_completion_tokens),
-        }
-
-        if stop:
-            json_data["stop"] = stop
-
+        current_messages = list(messages)
+        max_iterations = kwargs.get("max_tool_iterations", 5)
+        iteration = 0
+        
         tools = kwargs.get("tools") or self._tools
+        tool_map = {}
+        formatted_tools = []
+        
         if tools:
-            formatted_tools = []
+            tool_map = {tool.name: tool for tool in tools}
             for tool in tools:
                 if hasattr(tool, 'name') and hasattr(tool, 'description'):
                     tool_schema = {
@@ -141,37 +133,94 @@ class LangChainVNPT(BaseChatModel):
                             tool_schema["function"]["parameters"]["required"] = schema['required']
                     
                     formatted_tools.append(tool_schema)
+        
+        while iteration < max_iterations:
+            iteration += 1
             
-            json_data["tools"] = formatted_tools
+            payload_msgs = self._prepare_messages(current_messages)
             
-            tool_choice = kwargs.get("tool_choice", self._tool_choice)
-            if tool_choice:
-                json_data["tool_choice"] = tool_choice
+            json_data: Dict[str, Any] = {
+                "model": self._body_model,
+                "messages": payload_msgs,
+                "temperature": kwargs.get("temperature", self._temperature),
+                "top_p": kwargs.get("top_p", self._top_p),
+                "top_k": kwargs.get("top_k", self._top_k),
+                "n": kwargs.get("n", self._n),
+                "max_completion_tokens": kwargs.get("max_completion_tokens", self._max_completion_tokens),
+            }
 
-        response = requests.post(self._endpoint, headers=self._headers, json=json_data, timeout=self._timeout)
-        data = response.json()
-        
-        if "error" in data and not data.get("choices"):
-            raise ValueError(f"VNPT API error: {data}")
+            if stop:
+                json_data["stop"] = stop
 
-        choices = data.get("choices") or []
-        if not choices:
-            raise ValueError(f"VNPT response missing choices: {data}")
+            if formatted_tools:
+                json_data["tools"] = formatted_tools
+                tool_choice = kwargs.get("tool_choice", self._tool_choice)
+                if tool_choice:
+                    json_data["tool_choice"] = tool_choice
 
-        message = choices[0].get("message", {})
-        content = message.get("content") or ""
-        tool_calls = message.get("tool_calls", [])
+            response = requests.post(self._endpoint, headers=self._headers, json=json_data, timeout=self._timeout)
+            data = response.json()
+            
+            if "error" in data and not data.get("choices"):
+                raise ValueError(f"VNPT API error: {data}")
+
+            choices = data.get("choices") or []
+            if not choices:
+                raise ValueError(f"VNPT response missing choices: {data}")
+
+            message = choices[0].get("message", {})
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls", [])
+            
+            if not tool_calls:
+                additional_kwargs = {
+                    "all_api_responses": data
+                }
+                ai_message = AIMessage(
+                    content=content,
+                    additional_kwargs=additional_kwargs,
+                )
+                generation = ChatGeneration(
+                    message=ai_message,
+                    generation_info={"api_response": data}
+                )
+                return ChatResult(
+                    generations=[generation],
+                    llm_output={"api_response": data}
+                )
+            
+            additional_kwargs = {"raw_response": data, "tool_calls": tool_calls}
+            ai_message = AIMessage(
+                content=content,
+                additional_kwargs=additional_kwargs,
+            )
+            current_messages.append(ai_message)
+            
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("function", {}).get("name")
+                tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+                tool_id = tool_call.get("id")
+                
+                if tool_name in tool_map:
+                    try:
+                        tool_args = json.loads(tool_args_str)
+                        
+                        tool = tool_map[tool_name]
+                        result = tool.invoke(tool_args)
+                        
+                        tool_message = ToolMessage(
+                            content=str(result),
+                            tool_call_id=tool_id
+                        )
+                        current_messages.append(tool_message)
+                    except Exception as e:
+                        error_message = ToolMessage(
+                            content=f"Error executing tool: {str(e)}",
+                            tool_call_id=tool_id
+                        )
+                        current_messages.append(error_message)
         
-        additional_kwargs = {"raw_response": data}
-        if tool_calls:
-            additional_kwargs["tool_calls"] = tool_calls
-        
-        ai_message = AIMessage(
-            content=content,
-            additional_kwargs=additional_kwargs,
-        )
-        generation = ChatGeneration(message=ai_message)
-        return ChatResult(generations=[generation])
+        raise ValueError(f"Max tool iterations ({max_iterations}) reached without final answer")
 
     def bind_tools(self,
                    tools:list
