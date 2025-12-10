@@ -2,7 +2,7 @@ from modules.message_processer import get_message_by_qid
 from modules.VNPT import LangChainVNPT
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_experimental.tools import PythonREPLTool
-from modules.tools import sum
+from modules.tools import query_vector_store
 import json
 
 def get_api_key(llmApiName: str, 
@@ -26,12 +26,14 @@ def main():
                max_completion_tokens = 300,
                )
     
-    tools = [sum]
+    tools = [query_vector_store]
     llm_with_tools = llm.bind_tools(tools)
 
+    prompt = ""
+    message = ""
     messages = [
-        SystemMessage(content="sử dụng tool sum (nếu cần) để trả lời câu hỏi"),
-        HumanMessage(content="1 cộng 1 bằng bao nhiêu"),
+        SystemMessage(content=prompt),
+        HumanMessage(content=message),
     ]
     
     response = llm_with_tools.invoke(messages)
