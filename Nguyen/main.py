@@ -1,7 +1,8 @@
 from modules.message_processer import get_message_by_qid
 from modules.VNPT import LangChainVNPT
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_experimental.tools import PythonREPLTool
+from modules.tools import sum
 import json
 
 def get_api_key(llmApiName: str, 
@@ -26,19 +27,47 @@ def main():
                #tool_choice="sum"
                )
     
-    python_tool = PythonREPLTool()
-    tools = [python_tool]
+    tools = [sum]
+    llm_with_tools = llm.bind_tools(tools)
 
-    llm = llm.bind_tools(tools)
+    tool_map = {tool.name: tool for tool in tools}
 
-    prompt = """Chỉ cần trả về câu trả lời đúng (A,B,..). {"answer": "E", "explain": "explaination"}Trong đó answer là câu trả lời đúng, explain là lời giải thích cho answer, explain phải có dẫn chứng đầy đủ."""
-    question = get_message_by_qid("val_0032", split="val")
-    response = llm.invoke([
+    messages = [
         SystemMessage(content="sử dụng tool sum để trả lời câu hỏi"),
         HumanMessage(content="1 cộng 1 bằng bao nhiêu"),
-    ])
+    ]
+    
+    print("=== Lần gọi đầu tiên ===")
+    response = llm_with_tools.invoke(messages)
+    print(f"Response: {response}")
+    
+    if hasattr(response, 'tool_calls') and response.tool_calls:
 
-    print(response)
+        messages.append(response)
+
+        for tool_call in response.tool_calls:
+            tool_name = tool_call['name']
+            tool_args = tool_call['args']
+            tool_id = tool_call['id']
+
+            if tool_name in tool_map:
+                tool = tool_map[tool_name]
+                result = tool.invoke(tool_args)
+                print(f"Kết quả tool: {result}")
+                
+                # Add tool result to messages
+                tool_message = ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_id
+                )
+                messages.append(tool_message)
+        
+        # Second call - LLM will use tool results to generate final answer
+        print("\n=== Lần gọi thứ hai (với kết quả tool) ===")
+        final_response = llm_with_tools.invoke(messages)
+        print(f"Câu trả lời cuối cùng: {final_response}")
+    else:
+        print("Không có tool calls")
 
 if __name__ == "__main__":
     main()

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from langchain_core.runnables import Runnable, RunnableConfig
 import requests
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.language_models.base import (
     BaseLanguageModel,
@@ -13,75 +13,9 @@ from langchain_core.language_models.base import (
     LanguageModelInput,
 )
 from langchain_core.tools import BaseTool
-
-class VNPT:
-    def __init__(self, 
-                 model                :str,
-                 authorization        :str,
-                 tokenKey             :str,
-                 tokenId              :str,
-                 temperature          :float = 1.0,
-                 top_p                :float = 0.9,
-                 top_k                :int = 90,
-                 n                    :int = 1,
-                 max_completion_tokens:int = 50000,
-                 tool_choice          :str = "auto"
-                ):
-        
-        model_map = {
-            "vnptai-hackathon-small": ("vnptai-hackathon-small", "vnptai_hackathon_small"),
-            "vnptai-hackathon-large": ("vnptai-hackathon-large", "vnptai_hackathon_large"),
-            "vnptai_hackathon_small": ("vnptai-hackathon-small", "vnptai_hackathon_small"),
-            "vnptai_hackathon_large": ("vnptai-hackathon-large", "vnptai_hackathon_large"),
-        }
-
-        if model not in model_map:
-            raise ValueError(f"Unsupported model {model!r}.  Choose 'vnptai-hackathon-small'/'vnptai_hackathon_small' or 'vnptai-hackathon-large'/'vnptai_hackathon_large'")
-        
-        endpoint_slug, body_model = model_map[model]
-        self._model = body_model
-        self._endpoint = f"https://api.idg.vnpt.vn/data-service/v1/chat/completions/{endpoint_slug}"
-        self._temperature = temperature
-        self._top_p = top_p
-        self._top_k = top_k
-        self._n = n
-        self._max_completion_tokens = max_completion_tokens
-        self._headers = {
-            'Authorization': authorization, 
-            'Token-id': tokenId, 
-            'Token-key': tokenKey, 
-            'Content-Type': 'application/json', 
-        }
-        self._tool_choice = tool_choice
-
-    def __call__(self,
-                 message: str,
-                 prompt : str,
-                ):
-
-        json_data = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": message},
-            ],
-            "temperature": self._temperature,
-            "top_p": self._top_p,
-            "top_k": self._top_k,
-            "n": self._n,
-            "max_completion_tokens": self._max_completion_tokens,
-            "response_format": {"type": "json_object"},
-            "tool_choice": self._tool_choice
-        }
-
-        response = requests.post(self._endpoint, headers=self._headers, json=json_data, timeout=60)
-        return response.json()
-
-
 class LangChainVNPT(BaseChatModel):
     """LangChain-compatible chat model wrapper for VNPT endpoints."""
 
-    # BaseChatModel expects these attributes; keep defaults simple.
     callbacks: Any = None
     callback_manager: Any = None
     verbose: bool = False
@@ -126,20 +60,40 @@ class LangChainVNPT(BaseChatModel):
             "Content-Type": "application/json",
         }
         self._tool_choice = tool_choice
+        self._tools = None
 
     @property
     def _llm_type(self) -> str:
         return "vnpt-chat"
 
-    def _prepare_messages(self, messages: List[BaseMessage]) -> List[Dict[str, str]]:
-        payload_msgs: List[Dict[str, str]] = []
+    def _prepare_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
+        payload_msgs: List[Dict[str, Any]] = []
         for msg in messages:
             role = msg.type
             if role == "human":
                 role = "user"
             elif role == "ai":
                 role = "assistant"
-            payload_msgs.append({"role": role, "content": msg.content})
+            elif role == "tool":
+                role = "tool"
+            
+            msg_dict: Dict[str, Any] = {"role": role}
+            
+            if role == "tool":
+                msg_dict["content"] = msg.content
+                msg_dict["tool_call_id"] = msg.tool_call_id
+
+            elif role == "assistant" and hasattr(msg, 'additional_kwargs'):
+                tool_calls = msg.additional_kwargs.get('tool_calls')
+                if tool_calls:
+                    msg_dict["tool_calls"] = tool_calls
+                    msg_dict["content"] = msg.content or None
+                else:
+                    msg_dict["content"] = msg.content
+            else:
+                msg_dict["content"] = msg.content
+            
+            payload_msgs.append(msg_dict)
         return payload_msgs
 
     def _generate(self,
@@ -156,19 +110,43 @@ class LangChainVNPT(BaseChatModel):
             "top_k": kwargs.get("top_k", self._top_k),
             "n": kwargs.get("n", self._n),
             "max_completion_tokens": kwargs.get("max_completion_tokens", self._max_completion_tokens),
-            "tool_choice": self._tool_choice
         }
 
         if stop:
             json_data["stop"] = stop
 
-        tools = kwargs.get("tools")
+        tools = kwargs.get("tools") or self._tools
         if tools:
-            json_data["tools"] = tools
-
-        tool_choice = kwargs.get("tool_choice")
-        if tool_choice:
-            json_data["tool_choice"] = tool_choice
+            formatted_tools = []
+            for tool in tools:
+                if hasattr(tool, 'name') and hasattr(tool, 'description'):
+                    tool_schema = {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "required": []
+                            }
+                        }
+                    }
+                    
+                    if hasattr(tool, 'args_schema') and tool.args_schema:
+                        schema = tool.args_schema.schema()
+                        if 'properties' in schema:
+                            tool_schema["function"]["parameters"]["properties"] = schema['properties']
+                        if 'required' in schema:
+                            tool_schema["function"]["parameters"]["required"] = schema['required']
+                    
+                    formatted_tools.append(tool_schema)
+            
+            json_data["tools"] = formatted_tools
+            
+            tool_choice = kwargs.get("tool_choice", self._tool_choice)
+            if tool_choice:
+                json_data["tool_choice"] = tool_choice
 
         response = requests.post(self._endpoint, headers=self._headers, json=json_data, timeout=self._timeout)
         data = response.json()
@@ -181,11 +159,16 @@ class LangChainVNPT(BaseChatModel):
             raise ValueError(f"VNPT response missing choices: {data}")
 
         message = choices[0].get("message", {})
-        content = message.get("content", "")
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls", [])
+        
+        additional_kwargs = {"raw_response": data}
+        if tool_calls:
+            additional_kwargs["tool_calls"] = tool_calls
         
         ai_message = AIMessage(
             content=content,
-            additional_kwargs={"raw_response": data},
+            additional_kwargs=additional_kwargs,
         )
         generation = ChatGeneration(message=ai_message)
         return ChatResult(generations=[generation])
