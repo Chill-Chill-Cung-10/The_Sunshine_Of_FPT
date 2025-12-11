@@ -1,10 +1,12 @@
 import json
 import lancedb
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 from vnpt_embedding import VNPTEmbedding
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import os
 
 def get_api_key(llmApiName: str, 
                 path      : str = "api-keys.json"):
@@ -31,7 +33,11 @@ def main():
                             tokenKey = key["tokenKey"],
                             tokenId = key["tokenId"])
 
-    db = lancedb.connect(uri="vector_store")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    vector_store_path = os.path.join(parent_dir, "vector_store")
+    
+    db = lancedb.connect(uri=vector_store_path)
 
     df = pd.read_csv("data.csv")
     
@@ -53,7 +59,7 @@ def main():
         pa.field("IssueDate", pa.string()),
         pa.field("Status", pa.string()),
         pa.field("Field", pa.string()),
-        pa.field("vector", pa.list_(pa.float32()))
+        pa.field("vector", pa.list_(pa.float32(), 1024))
     ])
     
     table = None
@@ -90,6 +96,8 @@ def main():
             continue
         
         batch_embeddings = completed_batches[batch_idx]
+
+        batch_embeddings_np = [np.array(emb, dtype=np.float32) for emb in batch_embeddings]
         
         batch_df = pd.DataFrame({
             "Title": title[batch_start:batch_end],
@@ -97,7 +105,7 @@ def main():
             "IssueDate": issue_date[batch_start:batch_end],
             "Status": status[batch_start:batch_end],
             "Field": field[batch_start:batch_end],
-            "vector": batch_embeddings
+            "vector": batch_embeddings_np
         })
         
         with lock:

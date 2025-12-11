@@ -29,8 +29,8 @@ def main():
     tools = [query_vector_store]
     llm_with_tools = llm.bind_tools(tools)
 
-    prompt = ""
-    message = ""
+    prompt = "sử dụng tool vector store để trả lời câu hỏi"
+    message = "sử dụng tool vector store, query câu 'Moi anh ve bac ninh em choi tham' rồi trả về kết quả"
     messages = [
         SystemMessage(content=prompt),
         HumanMessage(content=message),
