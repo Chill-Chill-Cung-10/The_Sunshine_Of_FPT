@@ -147,6 +147,7 @@ class LangChainVNPT(BaseChatModel):
                 "top_k": kwargs.get("top_k", self._top_k),
                 "n": kwargs.get("n", self._n),
                 "max_completion_tokens": kwargs.get("max_completion_tokens", self._max_completion_tokens),
+                "response_format": {"type":"json_object"}
             }
 
             if stop:

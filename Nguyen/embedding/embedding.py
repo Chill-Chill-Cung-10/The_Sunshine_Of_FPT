@@ -111,6 +111,11 @@ def main():
         with lock:
             if table is None:
                 table = db.create_table("embeddings_data", data=batch_df, schema=schema, mode="overwrite")
+                #table.create_index(metric="cosine",
+                #                   vector_column_name="vector",
+                #                   num_partitions=16384,
+                #                   num_sub_vectors=128,
+                #                   replace=True)
             else:
                 table.add(batch_df)
             

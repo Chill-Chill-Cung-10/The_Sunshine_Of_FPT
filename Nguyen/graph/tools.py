@@ -22,7 +22,6 @@ def query_vector_store(query: str, top_k: int = 5):
     Query the LanceDB vector store to find relevant documents based on semantic similarity.
     
     :param query: The search query text to find similar documents
-    :param top_k: Number of top results to return (default: 5)
     :return: List of relevant documents with their metadata and similarity scores
     """
     try:
