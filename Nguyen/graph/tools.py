@@ -7,14 +7,40 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from embedding.vnpt_embedding import VNPTEmbedding
 
+_API_KEY_CACHE = None
+_EMBEDDING_CACHE = None
+
 def get_api_key(llmApiName: str, path: str = "api-keys.json"):
-    """Load API key from JSON file"""
+    """Load API key from JSON file with caching"""
+    global _API_KEY_CACHE
+    
+    if _API_KEY_CACHE is not None:
+        return _API_KEY_CACHE
+    
     with open(path, "r") as f:
         loaded_data = json.load(f)
     for key in loaded_data:
         if key["llmApiName"] == llmApiName:
+            _API_KEY_CACHE = key
             return key
     return None
+
+def get_embedding_instance():
+    """Get or create cached embedding instance"""
+    global _EMBEDDING_CACHE
+    
+    if _EMBEDDING_CACHE is None:
+        key = get_api_key("LLM embedings")
+        if not key:
+            return None
+        
+        _EMBEDDING_CACHE = VNPTEmbedding(
+            authorization=key["authorization"],
+            tokenKey=key["tokenKey"],
+            tokenId=key["tokenId"]
+        )
+    
+    return _EMBEDDING_CACHE
 
 @tool("vector store")
 def query_vector_store(query: str, top_k: int = 5):
@@ -25,15 +51,9 @@ def query_vector_store(query: str, top_k: int = 5):
     :return: List of relevant documents with their metadata and similarity scores
     """
     try:
-        key = get_api_key("LLM embedings")
-        if not key:
+        embeddings = get_embedding_instance()
+        if not embeddings:
             return {"error": "API key not found"}
-        
-        embeddings = VNPTEmbedding(
-            authorization=key["authorization"],
-            tokenKey=key["tokenKey"],
-            tokenId=key["tokenId"]
-        )
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)

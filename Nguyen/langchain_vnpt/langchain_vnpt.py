@@ -1,18 +1,9 @@
 import json
-import typing
 from typing import Any, ClassVar, Dict, List, Optional
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from langchain_core.runnables import Runnable, RunnableConfig
 import requests
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.language_models.base import (
-    BaseLanguageModel,
-    LangSmithParams,
-    LanguageModelInput,
-)
-from langchain_core.tools import BaseTool
 class LangChainVNPT(BaseChatModel):
     """LangChain-compatible chat model wrapper for VNPT endpoints."""
 
@@ -61,6 +52,10 @@ class LangChainVNPT(BaseChatModel):
         }
         self._tool_choice = tool_choice
         self._tools = None
+        
+        # Create persistent session for connection pooling
+        self._session = requests.Session()
+        self._session.headers.update(self._headers)
 
     @property
     def _llm_type(self) -> str:
@@ -101,7 +96,7 @@ class LangChainVNPT(BaseChatModel):
                   stop: Optional[List[str]] = None,
                   **kwargs: Any) -> ChatResult:
         current_messages = list(messages)
-        max_iterations = kwargs.get("max_tool_iterations", 5)
+        max_iterations = kwargs.get("max_tool_iterations", 2)
         iteration = 0
         
         tools = kwargs.get("tools") or self._tools
@@ -159,7 +154,8 @@ class LangChainVNPT(BaseChatModel):
                 if tool_choice:
                     json_data["tool_choice"] = tool_choice
 
-            response = requests.post(self._endpoint, headers=self._headers, json=json_data, timeout=self._timeout)
+            # Use session instead of requests.post for connection pooling
+            response = self._session.post(self._endpoint, json=json_data, timeout=self._timeout)
             data = response.json()
             
             if "error" in data and not data.get("choices"):

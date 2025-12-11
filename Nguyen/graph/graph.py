@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, START, END
-from state import State
-from node import preprocessing, classifier, external_knowledge, reading_comprehension, math_logic, write_answer
-from conditional_edges import preprocessing_router, semantic_router
+from .state import State
+from .node import preprocessing, classifier, external_knowledge, reading_comprehension, math_logic
+from .conditional_edges import preprocessing_router, semantic_router
 from functools import partial
 from langchain_vnpt.langchain_vnpt import LangChainVNPT
 def create_graph(llm:LangChainVNPT,
@@ -28,7 +28,6 @@ def create_graph(llm:LangChainVNPT,
                                                  math_logic_prompt
                                                 )
                                             )
-    graph_builder.add_node("write_answer", write_answer)
 
     graph_builder.add_edge(START, "preprocessing")
     
@@ -42,11 +41,9 @@ def create_graph(llm:LangChainVNPT,
                                         {}
                                         )
     
-    graph_builder.add_edge("external_knowledge", "write_answer")
-    graph_builder.add_edge("reading_comprehension", "write_answer")
-    graph_builder.add_edge("math_logic", "write_answer")
-
-    graph_builder.add_edge("write_answer", END)
+    graph_builder.add_edge("external_knowledge", END)
+    graph_builder.add_edge("reading_comprehension", END)
+    graph_builder.add_edge("math_logic", END)
 
     graph = graph_builder.compile()
     return graph

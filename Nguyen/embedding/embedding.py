@@ -3,21 +3,31 @@ import lancedb
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-from vnpt_embedding import VNPTEmbedding
+from .vnpt_embedding import VNPTEmbedding
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import os
 
+# Cache for API key
+_API_KEY_CACHE = None
+
 def get_api_key(llmApiName: str, 
                 path      : str = "api-keys.json"):
+    """Load API key with caching"""
+    global _API_KEY_CACHE
+    if _API_KEY_CACHE is not None:
+        return _API_KEY_CACHE
+    
     with open(path, "r") as f:
         loaded_data = json.load(f)
     for key in loaded_data:
         if key["llmApiName"] == llmApiName:
+            _API_KEY_CACHE = key
             return key
+    return None
 
 def process_batch(embeddings, batch_data, batch_idx, batch_start, batch_end):
-    """Xử lý một batch với embedding"""
+    """Xử lý một batch với embedding - sử dụng shared embedding instance"""
     try:
         print(f"Worker đang xử lý batch {batch_idx}: dòng {batch_start+1} đến {batch_end}")
         batch_embeddings = embeddings.embed_query(batch_data)
@@ -27,7 +37,7 @@ def process_batch(embeddings, batch_data, batch_idx, batch_start, batch_end):
         print(f"Lỗi khi xử lý batch {batch_idx}: {str(e)}")
         return batch_idx, None, str(e) 
 
-def main():
+def vector_store_init():
     key = get_api_key("LLM embedings")
     embeddings = VNPTEmbedding(authorization = key["authorization"],
                             tokenKey = key["tokenKey"],
@@ -39,7 +49,11 @@ def main():
     
     db = lancedb.connect(uri=vector_store_path)
 
-    df = pd.read_csv("data.csv")
+    data_csv_path = os.path.join(current_dir, "data.csv")
+    if not os.path.exists(data_csv_path):
+        raise FileNotFoundError(f"data.csv not found at {data_csv_path}")
+    
+    df = pd.read_csv(data_csv_path)
     
     title = list(df["Title"])
     data = list(df["Data"])
@@ -48,7 +62,7 @@ def main():
     field = list(df["Field"])
 
     batch_size = 500
-    num_workers = 20
+    num_workers = 10
     
     print(f"Tổng số dòng: {len(data)}")
     print(f"Bắt đầu xử lý với batch size = {batch_size} và {num_workers} workers")
@@ -90,13 +104,14 @@ def main():
             completed_batches[batch_idx] = batch_embeddings
 
     print("\nĐang lưu dữ liệu vào vector store...")
+    
+    all_dfs = []
     for i, (batch_start, batch_end, batch_data, batch_idx) in enumerate(batches):
         if batch_idx not in completed_batches:
             print(f"Bỏ qua batch {batch_idx} do lỗi")
             continue
         
         batch_embeddings = completed_batches[batch_idx]
-
         batch_embeddings_np = [np.array(emb, dtype=np.float32) for emb in batch_embeddings]
         
         batch_df = pd.DataFrame({
@@ -107,23 +122,20 @@ def main():
             "Field": field[batch_start:batch_end],
             "vector": batch_embeddings_np
         })
+        all_dfs.append(batch_df)
+    
+    if all_dfs:
+        table = db.create_table("embeddings_data", data=all_dfs[0], schema=schema, mode="overwrite")
+        total_saved = len(all_dfs[0])
+        print(f"Đã tạo table và lưu batch đầu tiên: {total_saved} bản ghi")
         
-        with lock:
-            if table is None:
-                table = db.create_table("embeddings_data", data=batch_df, schema=schema, mode="overwrite")
-                #table.create_index(metric="cosine",
-                #                   vector_column_name="vector",
-                #                   num_partitions=16384,
-                #                   num_sub_vectors=128,
-                #                   replace=True)
-            else:
-                table.add(batch_df)
-            
+        for idx, batch_df in enumerate(all_dfs[1:], start=2):
+            table.add(batch_df)
             total_saved += len(batch_df)
-            print(f"Đã lưu batch {batch_idx} - Tổng: {total_saved}/{len(data)} bản ghi")
+            print(f"Đã lưu batch {idx} - Tổng: {total_saved}/{len(data)} bản ghi")
     
     print(f"\nHoàn tất! Đã lưu tổng cộng {total_saved} bản ghi vào LanceDB table 'embeddings_data'")
 
     
 if __name__ == "__main__":
-    main()
+    vector_store_init()
