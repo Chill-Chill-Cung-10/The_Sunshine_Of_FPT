@@ -12,7 +12,6 @@ def get_api_key(llmApiName: str,
             return key
 from typing_extensions import TypedDict, Optional
 from langgraph.graph import StateGraph, START, END
-from message_processer import get_message_by_qid
 def graph_test(llm):
     class State(TypedDict):
         message: str
@@ -32,8 +31,9 @@ QUAN TRỌNG:
 - Chỉ trả về JSON, không thêm text khác"""
         response = llm.invoke([
             SystemMessage(content=prompt),
-            HumanMessage(content=state.get("message"))]).content
-        state["final_answer"] = json.loads(response)
+            HumanMessage(content=state.get("message"))])
+        print(response)
+        state["final_answer"] = json.loads(response.content)
         return state
 
     graph_builder = StateGraph(State)
@@ -45,8 +45,8 @@ QUAN TRỌNG:
     return graph
 
 def main():
-    key = get_api_key(llmApiName = "LLM small")
-    llm = LangChainVNPT(model = "vnptai-hackathon-small",
+    key = get_api_key(llmApiName = "LLM large")
+    llm = LangChainVNPT(model = "vnptai-hackathon-large",
                authorization = key["authorization"],
                tokenKey = key["tokenKey"],
                tokenId = key["tokenId"],
@@ -57,8 +57,8 @@ def main():
                max_completion_tokens = 500,
                )
     tools = [query_vector_store]
-    graph = graph_test(llm.bind_tools(tools))
-    message = get_message_by_qid(qid= "val_0001", split = "val")
+    graph = graph_test(llm)#.bind_tools(tools))
+    message = "Ngôi chùa Ba La Mật được khai dựng vào năm nào? A.1886 B.1990 C.1920 D.1930"
     graph_test_input = {"message":message}
     for chunk in graph.stream(graph_test_input):
         print(chunk)

@@ -1,0 +1,12 @@
+ Nếu query vector store mà không có thì tự trả lời câu hỏi đó.
+ Bạn phải trả về JSON hợp lệ theo định dạng sau:
+{"answer": "X", "explain": "lời giải thích ngắn gọn"}
+
+Trong đó:
+- answer: chữ cái đáp án đúng (A, B, C, hoặc D)
+- explain: giải thích ngắn gọn (tối đa 2-3 câu)
+
+QUAN TRỌNG: 
+- Phải đóng chuỗi JSON đầy đủ với dấu ngoặc kép và ngoặc nhọn cuối cùng
+- Giữ phần explain ngắn gọn để tránh vượt giới hạn ký tự
+- Chỉ trả về JSON, không thêm text khác

@@ -37,7 +37,7 @@ def format_message(item: dict) -> str:
     
     return "\n".join(parts)
 
-def main(test_file: str = None, split: str = "val"):
+def main(test_file: str = None, split: str = "val", message: str = None):
     """
     Main prediction function
     
@@ -46,73 +46,78 @@ def main(test_file: str = None, split: str = "val"):
         split: Split type if test_file not provided (for local dev)
     """
     graph = setup_model_and_graph()
-    
-    # Load dataset
-    if test_file:
-        print(f"Loading test data from: {test_file}")
-        dataset = load_dataset(file_path=test_file)
-    else:
-        print(f"Loading data from split: {split}")
-        dataset = load_dataset(split=split)
-    
-    print(f"Loaded {len(dataset)} questions")
-    
-    # Output files phải nằm tại /code/ (WORKDIR trong Docker)
-    # Trong Docker: /code/submission.csv
-    # Local dev: Nguyen/submission.csv
-    if test_file and test_file.startswith("/code/"):
-        # Hackathon mode - output tại /code/
-        submission_path = Path("/code/submission.csv")
-        submission_time_path = Path("/code/submission_time.csv")
-    else:
-        # Local dev mode - output tại thư mục hiện tại
-        submission_path = Path(__file__).parent / "submission.csv"
-        submission_time_path = Path(__file__).parent / "submission_time.csv"
-    
-    results_batch = []
+    if not message:
+        if test_file:
+            print(f"Loading test data from: {test_file}")
+            dataset = load_dataset(file_path=test_file)
+        else:
+            print(f"Loading data from split: {split}")
+            dataset = load_dataset(split=split)
+        
+        print(f"Loaded {len(dataset)} questions")
 
-    for idx, item in enumerate(dataset, 1):
-        question_start_time = time.time()
-        qid = item.get("qid")
-        message = format_message(item)
+        if test_file and test_file.startswith("/code/"):
+            # Hackathon mode
+            submission_path = Path("/code/submission.csv")
+            submission_time_path = Path("/code/submission_time.csv")
+        else:
+            # Local dev mode
+            submission_path = Path(__file__).parent / "submission.csv"
+            submission_time_path = Path(__file__).parent / "submission_time.csv"
         
-        print(f"[{idx}/{len(dataset)}] Processing {qid}...")
+        results_batch = []
+
+        for idx, item in enumerate(dataset, 1):
+            question_start_time = time.time()
+            qid = item.get("qid")
+            message = format_message(item)
+            
+            print(f"[{idx}/{len(dataset)}] Processing {qid}...")
+            
+            graph_input = {
+                "qid": qid,
+                "message": message
+            }
+            
+            try:
+                result = graph.invoke(graph_input)
+                execution_time = time.time() - question_start_time
+                
+                answer = result.get("answer", {}).get("answer", "")
+                
+                results_batch.append({
+                    "qid": qid,
+                    "answer": answer,
+                    "time": execution_time
+                })
+                
+                print(f"{qid} completed in {execution_time:.2f}s")
+            except Exception as e:
+                execution_time = time.time() - question_start_time
+                print(f"{qid} failed: {e}")
+                results_batch.append({
+                    "qid": qid,
+                    "answer": "",
+                    "time": execution_time
+                })
         
+        if results_batch:
+            df_results = pd.DataFrame(results_batch)
+            
+            # Write submission.csv (qid, answer only)
+            df_results[["qid", "answer"]].to_csv(submission_path, index=False, encoding='utf-8')
+            
+            # Write submission_time.csv (qid, answer, time)
+            df_results.to_csv(submission_time_path, index=False, encoding='utf-8')
+    else:
         graph_input = {
-            "qid": qid,
-            "message": message
-        }
-        
-        try:
-            result = graph.invoke(graph_input)
-            execution_time = time.time() - question_start_time
+                "qid": "test",
+                "message": message
+            }
             
-            answer = result.get("answer", {}).get("answer", "")
-            
-            results_batch.append({
-                "qid": qid,
-                "answer": answer,
-                "time": execution_time
-            })
-            
-            print(f"{qid} completed in {execution_time:.2f}s")
-        except Exception as e:
-            execution_time = time.time() - question_start_time
-            print(f"{qid} failed: {e}")
-            results_batch.append({
-                "qid": qid,
-                "answer": "",
-                "time": execution_time
-            })
-    
-    if results_batch:
-        df_results = pd.DataFrame(results_batch)
+        for chunk in graph.stream(graph_input):
+            print(chunk)
         
-        # Write submission.csv (qid, answer only)
-        df_results[["qid", "answer"]].to_csv(submission_path, index=False, encoding='utf-8')
-        
-        # Write submission_time.csv (qid, answer, time)
-        df_results.to_csv(submission_time_path, index=False, encoding='utf-8')
 
 if __name__ == "__main__":
     # Parse command line arguments
@@ -124,4 +129,5 @@ if __name__ == "__main__":
                         help='Split to use if test-file not provided (default: val)')
     
     args = parser.parse_args()
-    main(test_file=args.test_file, split=args.split)
+    message = "Trong một thí nghiệm phân tán hạt, tiết diện vi phân $ \\frac{d\\sigma}{d\\Omega} $ cho sự phân tán vào một góc khối $ d\\Omega $ được cho bởi công thức Rutherford:\n$$\n\\frac{d\\sigma}{d\\Omega} = \\left( \\frac{Z_1 Z_2 e^2}{4 \\pi \\epsilon_0 E} \\right)^2 \\frac{1}{\\sin^4(\\theta/2)}\n$$\nNếu số nguyên tử $ Z_1 $ của hạt tới được gấp đôi trong khi tất cả các tham số khác không đổi, thì tiết diện vi phân tại một góc cố định $ \\theta $ thay đổi theo nhân tử nào? A.2 B.4 C.1/2 D.1/4"
+    main(test_file=args.test_file, split=args.split, message=message)

@@ -1,10 +1,11 @@
 from langgraph.graph import StateGraph, START, END
 from .state import State
-from .node import preprocessing, classifier, external_knowledge, reading_comprehension, math_logic
-from .conditional_edges import preprocessing_router, semantic_router
+from .node import classifier, rag, external_knowledge, reading_comprehension, math_logic
+from .conditional_edges import semantic_router
 from functools import partial
 from langchain_vnpt.langchain_vnpt import LangChainVNPT
 def create_graph(llm:LangChainVNPT,
+                 svm_model,
                  tools:list,
                  external_knowledge_prompt:str,
                  reading_comprehension_prompt:str,
@@ -12,35 +13,36 @@ def create_graph(llm:LangChainVNPT,
                 ):
     graph_builder = StateGraph(State)
 
-    graph_builder.add_node("preprocessing", preprocessing)
-    graph_builder.add_node("classifier", classifier)
+    graph_builder.add_node("classifier", partial(classifier, svm_model=svm_model))
+    graph_builder.add_node("rag", rag)
     graph_builder.add_node("external_knowledge", partial(external_knowledge, 
-                                                         llm.bind_tools(tools=tools), 
-                                                         external_knowledge_prompt
+                                                         llm=llm, 
+                                                         prompt=external_knowledge_prompt
                                                         )
                                                     )
     graph_builder.add_node("reading_comprehension", partial(reading_comprehension, 
-                                                            llm, reading_comprehension_prompt
+                                                            llm=llm, 
+                                                            prompt=reading_comprehension_prompt
                                                         )
                                                     )
     graph_builder.add_node("math_logic", partial(math_logic, 
-                                                 llm, 
-                                                 math_logic_prompt
+                                                 llm=llm, 
+                                                 prompt=math_logic_prompt
                                                 )
                                             )
 
-    graph_builder.add_edge(START, "preprocessing")
-    
-    graph_builder.add_conditional_edges("preprocessing",
-                                        preprocessing_router,
-                                        {}
-                                        )
+    graph_builder.add_edge(START, "classifier")
     
     graph_builder.add_conditional_edges("classifier",
                                         semantic_router,
-                                        {}
-                                        )
+                                        {
+                                            "external_knowledge": "rag",
+                                            "reading_comprehension": "reading_comprehension",
+                                            "math_logic": "math_logic"
+                                        }
+                                    )
     
+    graph_builder.add_edge("rag", "external_knowledge")
     graph_builder.add_edge("external_knowledge", END)
     graph_builder.add_edge("reading_comprehension", END)
     graph_builder.add_edge("math_logic", END)

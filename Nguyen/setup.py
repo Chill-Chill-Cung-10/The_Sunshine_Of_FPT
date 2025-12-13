@@ -4,6 +4,7 @@ from graph.graph import create_graph
 from embedding.embedding import vector_store_init
 import json
 import lancedb
+import joblib
 import os
 from pathlib import Path
 
@@ -82,6 +83,14 @@ def setup_model_and_graph():
         max_completion_tokens=500,
     )
     
+    # Load SVM model
+    svm_model_path = Path(__file__).parent / "svm_model.pkl"
+    if svm_model_path.exists():
+        svm_model = joblib.load(svm_model_path)
+        print(f"SVM model loaded from {svm_model_path}")
+    else:
+        raise FileNotFoundError(f"SVM model not found at {svm_model_path}")
+    
     # Load prompts
     external_knowledge_prompt = load_prompt("external_knowledge_prompt")
     reading_comprehension_prompt = load_prompt("reading_comprehension_prompt")
@@ -91,6 +100,7 @@ def setup_model_and_graph():
     tools = [query_vector_store]
     graph = create_graph(
         llm=llm,
+        svm_model=svm_model,
         tools=tools,
         external_knowledge_prompt=external_knowledge_prompt,
         reading_comprehension_prompt=reading_comprehension_prompt,

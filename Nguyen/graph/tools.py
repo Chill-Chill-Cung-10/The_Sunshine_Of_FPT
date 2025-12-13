@@ -3,6 +3,7 @@ import lancedb
 import json
 import sys
 import os
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from embedding.vnpt_embedding import VNPTEmbedding
@@ -10,12 +11,15 @@ from embedding.vnpt_embedding import VNPTEmbedding
 _API_KEY_CACHE = None
 _EMBEDDING_CACHE = None
 
-def get_api_key(llmApiName: str, path: str = "api-keys.json"):
+def get_api_key(llmApiName: str, path: str = None):
     """Load API key from JSON file with caching"""
     global _API_KEY_CACHE
     
     if _API_KEY_CACHE is not None:
         return _API_KEY_CACHE
+    
+    if path is None:
+        path = Path(__file__).parent.parent / "api-keys.json"
     
     with open(path, "r") as f:
         loaded_data = json.load(f)
@@ -42,7 +46,7 @@ def get_embedding_instance():
     
     return _EMBEDDING_CACHE
 
-@tool("vector store")
+#@tool("vector store")
 def query_vector_store(query: str, top_k: int = 5):
     """
     Query the LanceDB vector store to find relevant documents based on semantic similarity.
@@ -70,7 +74,7 @@ def query_vector_store(query: str, top_k: int = 5):
         
         formatted_results = []
         for i, result in enumerate(results):
-            distance = result.get("_distance", 0)
+            distance = float(result.get("_distance", 0))
             if distance <= 0.5:
                 formatted_results.append({
                     "rank": len(formatted_results) + 1,
